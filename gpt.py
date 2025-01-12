@@ -15,6 +15,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 n_embd = 32
 head_size = 16
 
+print("Using device : ", device)
 
 # We are training our gpt on a sample Shakespeare text
 # LOAD THE DATA
@@ -102,6 +103,30 @@ class Head(nn.Module):
         return out
 
 
+# Implement multi head attention
+class MultiHeadAttention(nn.Module):
+    """Multiple heads of self attention in parallel"""
+
+    def __init__(self, num_heads, head_size):
+        super().__init__()
+        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+
+    def forward(self, x):
+        return torch.cat([h(x) for h in self.heads], dim=-1)
+
+
+# Implement a feedforward function
+class FeedForward(nn.Module):
+    """Simple linear layer followed by non-linearity"""
+
+    def __init__(self, n_embd):
+        super().__init__()
+        self.net = nn.Sequential(nn.Linear(n_embd, n_embd), nn.ReLU())
+
+    def forward(self, x):
+        return self.net(x)
+
+
 # IMPLEMENT A BIGRAM LANGUAGE MODEL
 class BigramLanguageModel(nn.Module):
     # contructor
@@ -111,7 +136,8 @@ class BigramLanguageModel(nn.Module):
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
         self.lm_head = nn.Linear(n_embd, vocab_size)
-        self.sa_head = Head(n_embd)
+        self.sa_heads = MultiHeadAttention(4, n_embd//4)
+        self.ffwd = FeedForward(n_embd)
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
     def forward(self, idx, targets=None):
@@ -121,7 +147,8 @@ class BigramLanguageModel(nn.Module):
         pos_emb = self.position_embedding_table(
             torch.arange(T, device=device))
         x = tok_emb + pos_emb
-        x = self.sa_head(x)
+        x = self.sa_heads(x)
+        x = self.ffwd(x)
         logits = self.lm_head(x)  # (B, T, vocab_size)
 
         if targets is None:
@@ -162,7 +189,7 @@ model = BigramLanguageModel()
 m = model.to(device)  # move the model parameters to gpu
 
 # TRAINING THE MODEL
-optimizer = torch.optim.AdamW(m.parameters(), lr=learning_rate)
+optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
 for iter in range(max_iters):
     if iter % eval_interval == 0:
@@ -174,7 +201,7 @@ for iter in range(max_iters):
         xb, yb = get_batch('train')
 
         # evaluate the loss
-        logits, loss = m(xb, yb)
+        logits, loss = model(xb, yb)
         # zero out all the gradients from previous step
         optimizer.zero_grad(set_to_none=True)
         # get gradients for all the parameters
