@@ -12,6 +12,8 @@ eval_interval = 300
 eval_iters = 200
 learning_rate = 1e-2
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+n_embd = 32
+
 
 # We are training our gpt on a sample Shakespeare text
 # LOAD THE DATA
@@ -74,15 +76,21 @@ def estimate_loss():
 # IMPLEMENT A BIGRAM LANGUAGE MODEL
 class BigramLanguageModel(nn.Module):
     # contructor
-    def __init__(self, vocab_size):
+    def __init__(self):
         super().__init__()
         # each token reads logits(scores) for next token from a lookup table
-        self.token_embedding_table = nn.Embedding(vocab_size, vocab_size)
+        self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
+        self.position_embedding_table = nn.Embedding(block_size, n_embd)
+        self.lm_head = nn.Linear(n_embd, vocab_size)
 
     def forward(self, idx, targets=None):
+        B, T = idx.shape
         # arrange the logits in a Batch(B) x Time(T) x Channel(C) tensor
-        # B = 4, T = 8, C = vocab_size(65 in our case)
-        logits = self.token_embedding_table(idx)
+        tok_emb = self.token_embedding_table(idx)  # (B, T, C)
+        pos_emb = self.position_embedding_table(
+            torch.arrange(T, device=device))
+        x = tok_emb + pos_emb
+        logits = self.lm_head(x)  # (B, T, vocab_size)
 
         if targets is None:
             loss = None
@@ -116,7 +124,7 @@ class BigramLanguageModel(nn.Module):
         return idx
 
 
-model = BigramLanguageModel(vocab_size)
+model = BigramLanguageModel()
 model.to(device)  # move the model parameters to gpu
 
 # TRAINING THE MODEL
@@ -144,3 +152,7 @@ for iter in range(max_iters):
 # Generate from the model
 context = torch.zeros((1, 1), dtype=torch.long, device=device)
 print(decode(model.generate(context, max_new_tokens=500)[0].tolist()))
+
+
+# Self attention(tokens talk to each other)
+# We do weighted aggregation of past elements
