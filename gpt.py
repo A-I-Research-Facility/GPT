@@ -7,12 +7,13 @@ from torch.nn import functional as F
 # Hyperparameters
 batch_size = 32
 block_size = 8
-max_iters = 3000
+max_iters = 5000
 eval_interval = 300
 eval_iters = 200
-learning_rate = 1e-2
+learning_rate = 1e-3
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 n_embd = 32
+head_size = 16
 
 
 # We are training our gpt on a sample Shakespeare text
@@ -73,6 +74,34 @@ def estimate_loss():
     return out
 
 
+# Self attention(tokens talk to each other)
+# but not across batches
+# We do weighted aggregation of past elements
+class Head(nn.Module):
+    """One head of self attention"""
+
+    def __init__(self, head_size):
+        super().__init__()
+        self.key = nn.Linear(n_embd, head_size, bias=False)
+        self.query = nn.Linear(n_embd, head_size, bias=False)
+        self.value = nn.Linear(n_embd, head_size, bias=False)
+        self.register_buffer('tril', torch.tril(
+            torch.ones(block_size, block_size)))
+
+    def forward(self, x):
+        B, T, C = x.shape
+        k = self.key(x)  # (B, T, C)
+        q = self.query(x)  # (B, T, C)
+        # compute attention scores(affinities)
+        wei = q @ k.transpose(-2, -1) * C**-0.5
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float("-inf"))
+        wei = F.softmax(wei, dim=-1)
+        # perform weighted aggregration of values
+        v = self.value(x)
+        out = wei @ v
+        return out
+
+
 # IMPLEMENT A BIGRAM LANGUAGE MODEL
 class BigramLanguageModel(nn.Module):
     # contructor
@@ -82,14 +111,17 @@ class BigramLanguageModel(nn.Module):
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
         self.lm_head = nn.Linear(n_embd, vocab_size)
+        self.sa_head = Head(n_embd)
+        self.lm_head = nn.Linear(n_embd, vocab_size)
 
     def forward(self, idx, targets=None):
         B, T = idx.shape
         # arrange the logits in a Batch(B) x Time(T) x Channel(C) tensor
         tok_emb = self.token_embedding_table(idx)  # (B, T, C)
         pos_emb = self.position_embedding_table(
-            torch.arrange(T, device=device))
+            torch.arange(T, device=device))
         x = tok_emb + pos_emb
+        x = self.sa_head(x)
         logits = self.lm_head(x)  # (B, T, vocab_size)
 
         if targets is None:
@@ -110,8 +142,10 @@ class BigramLanguageModel(nn.Module):
     def generate(self, idx, max_new_tokens):
         # idx is (B, T) array of indices in the current context
         for _ in range(max_new_tokens):
+            # crop the idx to the block_size
+            idx_cond = idx[:, -block_size:]
             # get predictions
-            logits, loss = self(idx)
+            logits, loss = self(idx_cond)
             # focus on last time step
             logits = logits[:, -1, :]  # becomes (B, C)
             # apply softmax to get probabilities
@@ -125,10 +159,10 @@ class BigramLanguageModel(nn.Module):
 
 
 model = BigramLanguageModel()
-model.to(device)  # move the model parameters to gpu
+m = model.to(device)  # move the model parameters to gpu
 
 # TRAINING THE MODEL
-optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+optimizer = torch.optim.AdamW(m.parameters(), lr=learning_rate)
 
 for iter in range(max_iters):
     if iter % eval_interval == 0:
@@ -140,7 +174,7 @@ for iter in range(max_iters):
         xb, yb = get_batch('train')
 
         # evaluate the loss
-        logits, loss = model(xb, yb)
+        logits, loss = m(xb, yb)
         # zero out all the gradients from previous step
         optimizer.zero_grad(set_to_none=True)
         # get gradients for all the parameters
@@ -151,8 +185,4 @@ for iter in range(max_iters):
 
 # Generate from the model
 context = torch.zeros((1, 1), dtype=torch.long, device=device)
-print(decode(model.generate(context, max_new_tokens=500)[0].tolist()))
-
-
-# Self attention(tokens talk to each other)
-# We do weighted aggregation of past elements
+print(decode(m.generate(context, max_new_tokens=500)[0].tolist()))
