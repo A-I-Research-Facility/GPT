@@ -17,6 +17,7 @@ head_size = 16
 
 print("Using device : ", device)
 
+
 # We are training our gpt on a sample Shakespeare text
 # LOAD THE DATA
 with open("input.txt", "r", encoding="utf-8") as f:
@@ -139,10 +140,12 @@ class Block(nn.Module):
         head_size = n_embd // n_head
         self.sa = MultiHeadAttention(n_head, head_size)
         self.ffwd = FeedForward(n_embd)
+        self.ln1 = nn.LayerNorm(n_embd)
+        self.ln2 = nn.LayerNorm(n_embd)
 
     def forward(self, x):
-        x = x + self.sa(x)
-        x = x + self.ffwd(x)
+        x = x + self.sa(self.ln1(x))
+        x = x + self.ffwd(self.ln2(x))
         return x
 
 
@@ -157,11 +160,9 @@ class BigramLanguageModel(nn.Module):
         self.blocks = nn.Sequential(
             Block(n_embd, n_head=4),
             Block(n_embd, n_head=4),
-            Block(n_embd, n_head=4)
+            Block(n_embd, n_head=4),
+            nn.LayerNorm(n_embd)
         )
-        # self.lm_head = nn.Linear(n_embd, vocab_size)
-        # self.sa_heads = MultiHeadAttention(4, n_embd//4)
-        # self.ffwd = FeedForward(n_embd)
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
     def forward(self, idx, targets=None):
