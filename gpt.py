@@ -20,7 +20,6 @@ dropout = 0.2
 print("Using device : ", device)
 
 
-# We are training our gpt on a sample Shakespeare text
 # LOAD THE DATA
 with open("input.txt", "r", encoding="utf-8") as f:
     text = f.read()
